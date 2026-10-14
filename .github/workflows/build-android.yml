@@ -1,179 +1,794 @@
-name: Construire APK Android - Billy-eLBERT STOCK
+name: Générer un APK Android - ARM64
 
-on:
-  workflow_dispatch:
-
-  push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
+on: workflow_dispatch
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
 
     steps:
 
-      - name: Recuperer le projet
+      # ============================================================
+      # 1. RÉCUPÉRER LE PROJET
+      # ============================================================
+
+      - name: Récupérer le projet
         uses: actions/checkout@v4
 
-      - name: Installer Python 3.12
+
+      # ============================================================
+      # 2. INSTALLER PYTHON
+      # ============================================================
+
+      - name: Installer Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
-      - name: Installer Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
 
-      - name: Verifier l'environnement
+      # ============================================================
+      # 3. INSTALLER LES DÉPENDANCES PYTHON
+      # ============================================================
+
+      - name: Installer les dépendances Python
+        shell: bash
         run: |
-          echo "=== PYTHON ==="
+          python -m pip install --upgrade pip setuptools wheel
+
+          python -m pip install PySide6==6.11.2
+
+          python -m pip install \
+            jinja2 \
+            packaging \
+            tqdm \
+            pkginfo \
+            buildozer
+
+          if [ -f requirements-build.txt ]; then
+            python -m pip install -r requirements-build.txt
+          fi
+
+
+      # ============================================================
+      # 4. DÉPENDANCES ANDROID PYSIDE6
+      # ============================================================
+
+      - name: Installer les dépendances Android de PySide6
+        shell: bash
+        run: |
+          PYTHON_SITE=$(python -c "import site; print(site.getsitepackages()[0])")
+
+          echo "Python site-packages : $PYTHON_SITE"
+
+          python -m pip install \
+            -r "$PYTHON_SITE/PySide6/scripts/requirements-android.txt"
+
+
+      # ============================================================
+      # 5. VÉRIFIER LES DÉPENDANCES
+      # ============================================================
+
+      - name: Vérifier les dépendances
+        shell: bash
+        run: |
+          python -c "import jinja2; print('jinja2 OK')"
+          python -c "import packaging; print('packaging OK')"
+          python -c "import tqdm; print('tqdm OK')"
+          python -c "import pkginfo; print('pkginfo OK')"
+          python -c "import PySide6; print('PySide6 OK')"
+
+          echo ""
+          echo "===== PYTHON ====="
           python --version
 
-          echo "=== PIP ==="
-          pip --version
+          echo ""
+          echo "===== PYSIDE6 ====="
+          python -c "import PySide6; print('PySide6 import OK')"
 
-          echo "=== JAVA ==="
-          java -version
+          echo ""
+          echo "===== BUILDOZER ====="
+          which buildozer
+          buildozer --version
 
-      - name: Installer dependances Linux
+
+      # ============================================================
+      # 6. VÉRIFIER MAIN.PY
+      # ============================================================
+
+      - name: Vérifier main.py
+        shell: bash
         run: |
-          sudo apt-get update
+          echo "===== CONTENU DU PROJET ====="
+          ls -la
+          echo "============================="
 
-          sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            curl \
-            wget \
-            build-essential \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses-dev \
-            cmake \
-            libffi-dev \
-            libssl-dev
+          if [ ! -f main.py ]; then
+            echo "ERREUR : main.py est introuvable"
+            exit 1
+          fi
 
-      - name: Mettre a jour pip
+          echo "main.py trouvé : OK"
+
+
+      # ============================================================
+      # 7. CRÉER LE PROJET PYSIDE
+      # ============================================================
+
+      - name: Créer le projet PySide
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade setuptools wheel
+          echo "===== CRÉATION DU PROJET PYSIDE ====="
 
-      - name: Installer PySide6
-        run: |
-          pip install PySide6
+          rm -f pysidedeploy.spec
 
-      - name: Installer Buildozer et Cython
-        run: |
-          pip install "Cython<3.2"
-          pip install buildozer
+          cat > pyproject.toml <<'EOF'
+          [project]
+          name = "Billy-eLBERT-STOCK"
 
-      - name: Telecharger les outils Android Qt
+          [tool.pyside6-project]
+          files = ["main.py"]
+          EOF
+
+          echo "===== pyproject.toml ====="
+          cat pyproject.toml
+          echo "=========================="
+
+          test -f pyproject.toml
+
+          echo "Projet PySide créé : OK"
+
+
+      # ============================================================
+      # 8. TÉLÉCHARGER PYSIDE SETUP
+      # ============================================================
+      - name: Télécharger PySide Setup
+        shell: bash
         run: |
           git clone --depth 1 https://code.qt.io/pyside/pyside-setup.git
 
+
+      # ============================================================
+      # 9. RESTAURER CACHE SDK / NDK
+      # ============================================================
+
+      - name: Restaurer le cache Android SDK NDK
+        id: android-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.pyside6_android_deploy
+          key: pyside6-android-6.11.2-${{ runner.os }}-r27c
+
+
+      # ============================================================
+      # 10. TÉLÉCHARGER SDK / NDK SI CACHE ABSENT
+      # ============================================================
+
+      - name: Télécharger SDK NDK Android
+        if: steps.android-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
           python pyside-setup/tools/cross_compile_android/main.py \
             --download-only \
             --skip-update \
             --auto-accept-license
 
-      - name: Telecharger PySide6 Android ARM64
+
+      # ============================================================
+      # 11. VÉRIFIER SDK / NDK
+      # ============================================================
+
+      - name: Vérifier SDK NDK
+        shell: bash
         run: |
-          mkdir -p android-wheels
+          echo "===== CACHE ANDROID ====="
 
-          cd android-wheels
-
-          qtpip download PySide6 \
-            --android \
-            --arch aarch64
-
-          echo "=== Fichiers trouves ==="
-          find .
-
-          PYSIDE_WHEEL=$(find . -name "PySide6*.whl" | head -n 1)
-          SHIBOKEN_WHEEL=$(find . -name "shiboken6*.whl" | head -n 1)
-
-          if [ -z "$PYSIDE_WHEEL" ]; then
-            echo "Wheel PySide6 introuvable"
+          if [ -d "$HOME/.pyside6_android_deploy" ]; then
+            echo "Cache Android trouvé : OK"
+            du -sh "$HOME/.pyside6_android_deploy"
+          else
+            echo "ERREUR : cache Android introuvable"
             exit 1
           fi
 
-          if [ -z "$SHIBOKEN_WHEEL" ]; then
-            echo "Wheel Shiboken6 introuvable"
+          echo "========================="
+
+
+      # ============================================================
+      # 12. SAUVEGARDER LE CACHE
+      # ============================================================
+
+      - name: Sauvegarder le cache Android NDK
+        if: steps.android-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.pyside6_android_deploy
+          key: pyside6-android-6.11.2-${{ runner.os }}-r27c
+
+
+      # ============================================================
+      # 13. CRÉER DOSSIER WHEELS
+      # ============================================================
+
+      - name: Créer le dossier Android
+        shell: bash
+        run: |
+          rm -rf android_wheels
+          mkdir -p android_wheels
+
+
+      # ============================================================
+      # 14. PYSIDE6 ANDROID ARM64
+      # ============================================================
+
+      - name: Télécharger PySide6 Android ARM64
+        shell: bash
+        run: |
+          wget -q --show-progress \
+            -O android_wheels/pyside6-android-aarch64.whl \
+            "https://download.qt.io/official_releases/QtForPython/pyside6/pyside6-6.11.2-6.11.2-cp311-cp311-android_aarch64.whl"
+
+          echo ""
+          echo "===== PYSIDE6 WHEEL ====="
+          ls -lh android_wheels/pyside6-android-aarch64.whl
+
+
+      # ============================================================
+      # 15. SHIBOKEN6 ANDROID ARM64
+      # ============================================================
+
+      - name: Télécharger Shiboken6 Android ARM64
+        shell: bash
+        run: |
+          wget -q --show-progress \
+            -O android_wheels/shiboken6-android-aarch64.whl \
+            "https://download.qt.io/official_releases/QtForPython/shiboken6/shiboken6-6.11.2-6.11.2-cp311-cp311-android_aarch64.whl"
+
+          echo ""
+          echo "===== SHIBOKEN6 WHEEL ====="
+          ls -lh android_wheels/shiboken6-android-aarch64.whl
+
+
+      # ============================================================
+      # 16. VÉRIFIER LES WHEELS
+      # ============================================================
+
+      - name: Vérifier les wheels Android
+        shell: bash
+        run: |
+          echo "===== WHEELS ANDROID ====="
+
+          ls -lh android_wheels
+
+          test -f android_wheels/pyside6-android-aarch64.whl
+          test -f android_wheels/shiboken6-android-aarch64.whl
+          echo "PySide6 Android ARM64 OK"
+          echo "Shiboken6 Android ARM64 OK"
+
+
+      # ============================================================
+      # 17. VÉRIFIER L'OUTIL
+      # ============================================================
+
+      - name: Vérifier pyside6-android-deploy
+        shell: bash
+        run: |
+          which pyside6-android-deploy
+          pyside6-android-deploy --help
+
+
+      # ============================================================
+      # 18. INITIALISER PYSIDEDEPLOY
+      # ============================================================
+
+      - name: Initialiser pysidedeploy.spec
+        shell: bash
+        run: |
+          echo "===== INITIALISATION PYSIDEDEPLOY ====="
+
+          rm -f pysidedeploy.spec
+
+          pyside6-android-deploy \
+            --init \
+            --wheel-pyside "android_wheels/pyside6-android-aarch64.whl" \
+            --wheel-shiboken "android_wheels/shiboken6-android-aarch64.whl"
+
+          if [ ! -f pysidedeploy.spec ]; then
+            echo "ERREUR : pysidedeploy.spec n'a pas été créé"
             exit 1
           fi
 
-          echo "PYSIDE_WHEEL=$PWD/$PYSIDE_WHEEL" >> $GITHUB_ENV
-          echo "SHIBOKEN_WHEEL=$PWD/$SHIBOKEN_WHEEL" >> $GITHUB_ENV
+          echo "pysidedeploy.spec créé : OK"
 
-      - name: Verifier le projet
+
+      # ============================================================
+      # 19. CONFIGURER SDK / NDK / ARM64
+      # ============================================================
+
+      - name: Configurer Android
+        shell: bash
         run: |
-          echo "=== CONTENU DU DEPOT ==="
+
+          echo "=========================================="
+          echo "      RECHERCHE DU SDK ANDROID"
+          echo "=========================================="
+
+          SDK_PATH="$HOME/.pyside6_android_deploy/android-sdk"
+
+          if [ ! -d "$SDK_PATH" ]; then
+
+            echo "SDK direct non trouvé."
+            echo "Recherche automatique du SDK..."
+
+            ADB_FOUND=$(find "$HOME/.pyside6_android_deploy" \
+              -type f \
+              -name adb \
+              -path "*/platform-tools/adb" \
+              -print \
+              -quit)
+
+            if [ -n "$ADB_FOUND" ]; then
+              SDK_PATH="$(dirname "$(dirname "$ADB_FOUND")")"
+            fi
+
+          fi
+
+          if [ -z "$SDK_PATH" ] || [ ! -d "$SDK_PATH" ]; then
+            echo "ERREUR : SDK Android introuvable."
+            exit 1
+          fi
+
+          echo "SDK TROUVÉ : $SDK_PATH"
+
+
+          # ========================================================
+          # NDK
+          # ========================================================
+
+          echo ""
+          echo "=========================================="
+          echo "      RECHERCHE DU NDK ANDROID"
+          echo "=========================================="
+
+          NDK_SOURCE=$(find "$HOME/.pyside6_android_deploy" \
+            -type f \
+            -name source.properties \
+            -print \
+            -quit)
+
+          if [ -n "$NDK_SOURCE" ]; then
+            NDK_PATH="$(dirname "$NDK_SOURCE")"
+          else
+
+            NDK_PATH=$(find "$HOME/.pyside6_android_deploy" \
+              -type d \
+              -name "android-ndk*" \
+              -print \
+              -quit)
+
+          fi
+
+          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+            echo "ERREUR : NDK Android introuvable."
+            exit 1
+          fi
+
+          echo "NDK TROUVÉ : $NDK_PATH"
+
+
+          # ========================================================
+          # LLVM
+          # ========================================================
+
+          LLVM_READOBJ=$(find "$NDK_PATH" \
+            -type f \
+            -name llvm-readobj \
+            -print \
+            -quit)
+
+          if [ -z "$LLVM_READOBJ" ]; then
+            echo "ERREUR : llvm-readobj introuvable."
+            exit 1
+          fi
+
+          echo "llvm-readobj : $LLVM_READOBJ"
+
+
+          # ========================================================
+          # ADB
+          # ========================================================
+
+          ADB="$SDK_PATH/platform-tools/adb"
+
+          if [ ! -f "$ADB" ]; then
+            echo "ERREUR : adb introuvable."
+            exit 1
+          fi
+          echo "adb : $ADB"
+
+
+          # ========================================================
+          # EXPORT
+          # ========================================================
+
+          echo "SDK_PATH=$SDK_PATH" >> "$GITHUB_ENV"
+          echo "NDK_PATH=$NDK_PATH" >> "$GITHUB_ENV"
+
+          export SDK_PATH
+          export NDK_PATH
+
+
+          # ========================================================
+          # CONFIGURATION PYSIDEDEPLOY
+          # ========================================================
+
+          python - <<'PY'
+          from configparser import ConfigParser
+          from pathlib import Path
+          import os
+
+          spec = Path("pysidedeploy.spec")
+
+          sdk_path = os.environ["SDK_PATH"]
+          ndk_path = os.environ["NDK_PATH"]
+
+          config = ConfigParser()
+          config.read(spec)
+
+          if not config.has_section("app"):
+              config.add_section("app")
+
+          config["app"]["title"] = "Billy-eLBERT STOCK"
+          config["app"]["project_dir"] = str(Path.cwd())
+          config["app"]["input_file"] = "main.py"
+          config["app"]["exec_directory"] = str(Path.cwd())
+
+          if "project_file" in config["app"]:
+              del config["app"]["project_file"]
+
+          if not config.has_section("android"):
+              config.add_section("android")
+
+          config["android"]["wheel_pyside"] = str(
+              Path.cwd() /
+              "android_wheels" /
+              "pyside6-android-aarch64.whl"
+          )
+
+          config["android"]["wheel_shiboken"] = str(
+              Path.cwd() /
+              "android_wheels" /
+              "shiboken6-android-aarch64.whl"
+          )
+
+          if not config.has_section("buildozer"):
+              config.add_section("buildozer")
+
+          config["buildozer"]["mode"] = "debug"
+          config["buildozer"]["arch"] = "aarch64"
+          config["buildozer"]["ndk_path"] = ndk_path
+          config["buildozer"]["sdk_path"] = sdk_path
+
+          with spec.open("w") as f:
+              config.write(f)
+
+          print("PYSIDEDEPLOY CONFIGURÉ")
+          print("SDK :", sdk_path)
+          print("NDK :", ndk_path)
+          print("Architecture : aarch64")
+          print("Mode : debug")
+          print("Entrée : main.py")
+          PY
+
+          echo ""
+          echo "===== PYSIDEDEPLOY.SPEC ====="
+          cat pysidedeploy.spec
+
+
+      # ============================================================
+      # 20. PRÉPARER LE BUILD
+      # ============================================================
+
+      - name: Préparer Buildozer
+        shell: bash
+        run: |
+
+          echo "=========================================="
+          echo "        PRÉPARATION BUILDOZER"
+          echo "=========================================="
+
+          echo ""
+          echo "===== AVANT BUILD ====="
+
           ls -la
 
-          if [ ! -f main.py ]; then
-            echo "main.py introuvable"
-            exit 1
-          fi
+          echo ""
+          echo "===== PYSIDEDEPLOY ====="
 
-          python -m py_compile main.py
+          cat pysidedeploy.spec
 
-          if [ -d Ressources ]; then
-            echo "=== DOSSIER RESSOURCES ==="
-            find Ressources -type f
-          else
-            echo "::warning::Dossier Ressources absent"
-          fi
+          echo ""
+          echo "===== BUILDOZER ====="
 
-      - name: Construire APK Android
+          buildozer --version
+
+
+      # ============================================================
+      # 21. LANCER PYSIDE6 DEPLOY
+      # ============================================================
+
+      - name: Préparer le projet Android avec PySide6
+        shell: bash
         run: |
+
+          echo "=========================================="
+          echo "     PYSIDE6 ANDROID DEPLOY"
+          echo "=========================================="
+
           pyside6-android-deploy \
             --force \
             --verbose \
-            --name "Billy-eLBERT STOCK" \
-            --wheel-pyside="$PYSIDE_WHEEL" \
-            --wheel-shiboken="$SHIBOKEN_WHEEL"
+            --keep-deployment-files \
+            --name "Billy-eLBERT-STOCK" \
+            --wheel-pyside "android_wheels/pyside6-android-aarch64.whl" \
+            --wheel-shiboken "android_wheels/shiboken6-android-aarch64.whl" \
+            --ndk-path "$NDK_PATH" \
+            --sdk-path "$SDK_PATH"
 
-      - name: Rechercher APK genere
-        run: |
-          echo "=== RECHERCHE APK ==="
+          echo ""
+          echo "=========================================="
+          echo " PYSIDE6 DEPLOY TERMINÉ"
+          echo "=========================================="
+          echo ""
+          echo "===== FICHIERS GÉNÉRÉS ====="
 
-          find . -type f -name "*.apk"
+          find . \
+            -maxdepth 3 \
+            -type f \
+            \( \
+              -name "buildozer.spec" \
+              -o -name "pysidedeploy.spec" \
+            \) \
+            -print
 
-      - name: Preparer APK
+
+      # ============================================================
+      # 22. FORCER BUILDOZER DEBUG APK
+      # ============================================================
+
+      - name: FORCER LA CONSTRUCTION APK AVEC BUILDOZER
         shell: bash
         run: |
-          set -e
 
-          mkdir -p dist-apk
+          echo "=========================================="
+          echo "     FORÇAGE DE LA CONSTRUCTION APK"
+          echo "=========================================="
 
-          APK=$(find . -type f -name "*.apk" | head -n 1)
+          if [ ! -f buildozer.spec ]; then
 
-          if [ -z "$APK" ]; then
-            echo "Aucun APK genere"
+            echo "ERREUR : buildozer.spec introuvable."
+
+            echo ""
+            echo "Recherche :"
+
+            find . \
+              -type f \
+              -name "buildozer.spec" \
+              -print
+
             exit 1
+
           fi
 
-          cp "$APK" dist-apk/Billy-eLBERT-STOCK-ARM64.apk
 
-          sha256sum dist-apk/Billy-eLBERT-STOCK-ARM64.apk \
-            > dist-apk/SHA256SUMS.txt
+          echo ""
+          echo "===== BUILDOZER.SPEC TROUVÉ ====="
 
-          ls -lh dist-apk/
-          - name: Publier APK
-          uses: actions/upload-artifact@v4
-          with:
-          name: Billy-eLBERT-STOCK-APK-ARM64
-          path: dist-apk/*
+          cat buildozer.spec
+
+
+          echo ""
+          echo "=========================================="
+          echo "      BUILD APK ARM64"
+          echo "=========================================="
+
+
+          buildozer -v android debug
+
+
+          echo ""
+          echo "=========================================="
+          echo "      BUILDOZER TERMINÉ"
+          echo "=========================================="
+
+
+          echo ""
+          echo "===== CONTENU BIN ====="
+
+          if [ -d bin ]; then
+            find bin \
+              -maxdepth 3 \
+              -type f \
+              -print
+          else
+            echo "ATTENTION : bin n'existe pas encore."
+          fi
+
+
+      # ============================================================
+      # 23. RECHERCHE APK
+      # ============================================================
+
+      - name: Rechercher l APK généré
+        if: always()
+        shell: bash
+        run: |
+
+          echo "=========================================="
+          echo "       RECHERCHE FINALE APK"
+          echo "=========================================="
+
+
+          echo ""
+          echo "===== BIN ====="
+
+          if [ -d bin ]; then
+            find bin \
+              -type f \
+              -name "*.apk" \
+              -print
+          fi
+
+
+          echo ""
+          echo "===== PROJET ====="
+
+          find . \
+            -type f \
+            -name "*.apk" \
+            -not -path "./.git/*" \
+            -print \
+            2>/dev/null || true
+
+
+          echo ""
+          echo "===== BUILDOZER ====="
+
+          if [ -d .buildozer ]; then
+
+            find .buildozer \
+              -type f \
+              \( \
+                -name "*.apk" \
+                -o -name "*.aab" \
+              \) \
+              -print \
+              2>/dev/null || true
+
+          fi
+
+
+          echo ""
+          echo "===== FIN RECHERCHE ====="
+
+
+      # ============================================================
+      # 24. RASSEMBLER APK
+      # ============================================================
+
+      - name: Rassembler l APK
+        shell: bash
+        run: |
+
+          echo "=========================================="
+          echo "       RASSEMBLEMENT DE L'APK"
+          echo "=========================================="
+
+
+          mkdir -p dist
+
+          APK=$(find . \
+            -type f \
+            -name "*.apk" \
+            -not -path "./dist/*" \
+            -not -path "./.git/*" \
+            -print \
+            -quit \
+            2>/dev/null || true)
+
+
+          echo ""
+          echo "APK TROUVÉ : $APK"
+
+
+          if [ -z "$APK" ]; then
+
+            echo ""
+            echo "=========================================="
+            echo "       AUCUN APK GÉNÉRÉ"
+            echo "=========================================="
+
+            echo ""
+            echo "===== CONTENU BIN ====="
+            if [ -d bin ]; then
+              find bin -type f -print
+            else
+              echo "bin absent"
+            fi
+
+            echo ""
+            echo "===== DERNIERS FICHIERS BUILDOZER ====="
+
+            if [ -d .buildozer ]; then
+              find .buildozer \
+                -type f \
+                -printf '%T@ %p\n' \
+                2>/dev/null \
+                | sort -nr \
+                | head -n 100
+            fi
+
+            exit 1
+
+          fi
+
+
+          echo ""
+          echo "=========================================="
+          echo "             APK TROUVÉ"
+          echo "=========================================="
+
+
+          echo "Source : $APK"
+
+          ls -lh "$APK"
+
+
+          cp "$APK" \
+            dist/Billy-eLBERT-STOCK-ARM64.apk
+
+
+          echo ""
+          echo "=========================================="
+          echo "          APK FINAL PRÊT"
+          echo "=========================================="
+
+
+          ls -lh \
+            dist/Billy-eLBERT-STOCK-ARM64.apk
+
+
+      # ============================================================
+      # 25. VÉRIFIER APK
+      # ============================================================
+
+      - name: Vérifier que l APK existe
+        shell: bash
+        run: |
+
+          if [ ! -f dist/Billy-eLBERT-STOCK-ARM64.apk ]; then
+
+            echo "ERREUR : APK final introuvable."
+
+            exit 1
+
+          fi
+
+
+          echo "========================================"
+          echo "       APK GÉNÉRÉ AVEC SUCCÈS"
+          echo "========================================"
+
+
+          ls -lh dist/Billy-eLBERT-STOCK-ARM64.apk
+
+
+      # ============================================================
+      # 26. PUBLIER APK
+      # ============================================================
+
+      - name: Publier l APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Billy-eLBERT-STOCK-Android-ARM64
+          path: dist/Billy-eLBERT-STOCK-ARM64.apk
           if-no-files-found: error
-          retention-days: 14
