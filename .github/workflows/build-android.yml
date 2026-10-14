@@ -70,15 +70,7 @@ jobs:
           python -m pip install -r pyside-setup/requirements.txt
           python -m pip install -r pyside-setup/tools/cross_compile_android/requirements.txt
           python -m pip install jinja2
-          python -m pip install qtpip
-          QTPIP_BIN="$(python -c 'import qtpip, pathlib; print(pathlib.Path(qtpip.__file__).parent / "qtpip")')"
-          echo "=== Verification des bibliotheques qtpip ==="
-          ldd "$QTPIP_BIN" || true
-          if ldd "$QTPIP_BIN" | grep -q 'not found'; then
-            echo "::error::Une bibliotheque partagee requise par qtpip manque encore"
-            exit 1
-          fi
-          python -m qtpip --help
+          echo "Les roues Android seront telechargees depuis les archives officielles Qt, sans qtpip commercial."
 
       - name: Telecharger les outils Android Qt
         run: |
@@ -87,25 +79,40 @@ jobs:
             --skip-update \
             --auto-accept-license
 
-      - name: Telecharger PySide6 Android ARM64
+      - name: Telecharger PySide6 Android ARM64 depuis Qt officiel
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p android-wheels
           cd android-wheels
-          qtpip download PySide6 --android --arch aarch64
-          echo "=== Fichiers trouves ==="
-          find . -maxdepth 1 -type f -print
-          PYSIDE_WHEEL="$(find . -maxdepth 1 -type f -iname 'pyside6-*.whl' | head -n 1)"
-          SHIBOKEN_WHEEL="$(find . -maxdepth 1 -type f -iname 'shiboken6-*.whl' | head -n 1)"
-          if [ -z "$PYSIDE_WHEEL" ]; then
-            echo "::error::Wheel PySide6 Android introuvable"
-            exit 1
-          fi
-          if [ -z "$SHIBOKEN_WHEEL" ]; then
-            echo "::error::Wheel Shiboken6 Android introuvable"
-            exit 1
-          fi
-          echo "PYSIDE_WHEEL=$PWD/$PYSIDE_WHEEL" >> "$GITHUB_ENV"
-          echo "SHIBOKEN_WHEEL=$PWD/$SHIBOKEN_WHEEL" >> "$GITHUB_ENV"
+          BASE="https://download.qt.io/official_releases/QtForPython"
+          PYSIDE_FILE="pyside6-6.11.2-6.11.2-cp311-cp311-android_aarch64.whl"
+          SHIBOKEN_FILE="shiboken6-6.11.2-6.11.2-cp311-cp311-android_aarch64.whl"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$BASE/pyside6/$PYSIDE_FILE" -o "$PYSIDE_FILE"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$BASE/shiboken6/$SHIBOKEN_FILE" -o "$SHIBOKEN_FILE"
+          echo "=== Verification des roues Android officielles ==="
+          ls -lh *.whl
+          echo "c5288e0740ad91d87d4cafa16132768c149c56521bf63c83c98404b865911678  $PYSIDE_FILE" | sha256sum -c -
+          echo "e99609b689d3df2ac97ffbe17df0ce8b1246b2c47b4d24f6fb73f1eaad4bd0f2  $SHIBOKEN_FILE" | sha256sum -c -
+          python - <<'PYWHEELS'
+          from pathlib import Path
+          from zipfile import ZipFile
+          files = list(Path('.').glob('*.whl'))
+          assert len(files) == 2, f"Deux roues attendues, trouvees: {len(files)}"
+          for f in files:
+              with ZipFile(f) as z:
+                  assert z.testzip() is None, f"Archive corrompue: {f}"
+              print(f"OK archive: {f} ({f.stat().st_size} octets)")
+          PYSIDE = next(f for f in files if f.name.startswith('pyside6-'))
+          SHIBOKEN = next(f for f in files if f.name.startswith('shiboken6-'))
+          with open(Path(__import__('os').environ['GITHUB_ENV']), 'a') as env:
+              env.write(f"PYSIDE_WHEEL={PYSIDE.resolve()}\n")
+              env.write(f"SHIBOKEN_WHEEL={SHIBOKEN.resolve()}\n")
+          PYSIDE_WHEEL = PYSIDE
+          SHIBOKEN_WHEEL = SHIBOKEN
+          PYWHEELS
 
       - name: Verifier le projet
         run: |
