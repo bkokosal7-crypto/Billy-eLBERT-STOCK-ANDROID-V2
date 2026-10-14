@@ -45,7 +45,8 @@ jobs:
           sudo apt-get install -y \
             git zip unzip curl wget build-essential \
             autoconf automake libtool pkg-config zlib1g-dev \
-            libncurses-dev cmake libffi-dev libssl-dev
+            libncurses-dev cmake libffi-dev libssl-dev \
+            libdouble-conversion3
 
       - name: Mettre a jour pip
         run: |
@@ -70,6 +71,13 @@ jobs:
           python -m pip install -r pyside-setup/tools/cross_compile_android/requirements.txt
           python -m pip install jinja2
           python -m pip install qtpip
+          QTPIP_BIN="$(python -c 'import qtpip, pathlib; print(pathlib.Path(qtpip.__file__).parent / "qtpip")')"
+          echo "=== Verification des bibliotheques qtpip ==="
+          ldd "$QTPIP_BIN" || true
+          if ldd "$QTPIP_BIN" | grep -q 'not found'; then
+            echo "::error::Une bibliotheque partagee requise par qtpip manque encore"
+            exit 1
+          fi
           python -m qtpip --help
 
       - name: Telecharger les outils Android Qt
