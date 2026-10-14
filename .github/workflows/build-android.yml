@@ -1,36 +1,158 @@
-name: Build Billy-eLBERT STOCK
+name: Build Android APK
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  verify-project:
-    runs-on: ubuntu-latest
+  build-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
 
     steps:
-      - name: Recuperer le projet
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Installer Python
+      - name: Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Installer dependances
-        run: |
-          python -m pip install --upgrade pip
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-          pip install PySide6
-          pip install reportlab
-
-      - name: Verifier le code
+      - name: Verification projet
         run: |
-          python -m py_compile main.py
-
-      - name: Verifier ressources
-        run: |
+          echo "===== DEPOT ====="
           ls -la
 
-          if [ -d Ressources ]; then
-            find Ressources -type f
+          if [ ! -f main.py ]; then
+            echo "Erreur : main.py introuvable"
+            exit 1
           fi
+
+          python -m py_compile main.py
+
+      - name: Installer dependances systeme
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+          git \
+          zip \
+          unzip \
+          wget \
+          curl \
+          build-essential \
+          autoconf \
+          automake \
+          libtool \
+          pkg-config \
+          cmake \
+          zlib1g-dev \
+          libffi-dev \
+          libssl-dev
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools wheel
+
+      - name: Installer dependances Python
+        run: |
+          pip install PySide6
+          pip install shiboken6
+          pip install "Cython<3.2"
+          pip install buildozer
+          pip install reportlab
+
+      - name: Verification ressources
+        run: |
+          if [ -d Ressources ]; then
+            echo "Dossier Ressources detecte"
+            find Ressources -type f
+          else
+            echo "Attention : dossier Ressources absent"
+          fi
+
+      - name: Recuperer outils Android Qt
+        run: |
+          git clone --depth 1 https://code.qt.io/pyside/pyside-setup.git
+
+      - name: Telecharger SDK Android Qt
+        run: |
+          python pyside-setup/tools/cross_compile_android/main.py \
+          --download-only \
+          --skip-update \
+          --auto-accept-license
+
+      - name: Telecharger roues Android
+        run: |
+          mkdir -p android-wheels
+
+          cd android-wheels
+
+          qtpip download PySide6 \
+          --android \
+          --arch aarch64
+
+          find .
+
+          PYSIDE_WHEEL=$(find . -iname "PySide6*.whl" | head -n 1)
+          SHIBOKEN_WHEEL=$(find . -iname "shiboken6*.whl" | head -n 1)
+
+          if [ -z "$PYSIDE_WHEEL" ]; then
+            echo "PySide6 wheel introuvable"
+            exit 1
+          fi
+
+          if [ -z "$SHIBOKEN_WHEEL" ]; then
+            echo "Shiboken wheel introuvable"
+            exit 1
+          fi
+
+          echo "PYSIDE_WHEEL=$PWD/$PYSIDE_WHEEL" >> $GITHUB_ENV
+          echo "SHIBOKEN_WHEEL=$PWD/$SHIBOKEN_WHEEL" >> $GITHUB_ENV
+
+      - name: Construction APK
+        run: |
+          pyside6-android-deploy \
+          --force \
+          --verbose \
+          --name "Billy-eLBERT STOCK" \
+          --wheel-pyside="$PYSIDE_WHEEL" \
+          --wheel-shiboken="$SHIBOKEN_WHEEL"
+
+      - name: Recherche APK
+        run: |
+          find . -name "*.apk"
+
+      - name: Preparation APK
+        run: |
+          mkdir -p dist
+
+          APK=$(find . -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "Aucun APK genere"
+            exit 1
+          fi
+
+          cp "$APK" dist/Billy-eLBERT-STOCK.apk
+
+          sha256sum dist/Billy-eLBERT-STOCK.apk > dist/SHA256SUMS.txt
+
+          ls -lh dist
+
+      - name: Publier APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Billy-eLBERT-STOCK-APK
+          path: dist/*
+          retention-days: 14
+          
