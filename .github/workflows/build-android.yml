@@ -63,7 +63,9 @@ jobs:
 
       - name: Telecharger le code source officiel Qt for Python
         run: |
-          git clone --depth 1 https://code.qt.io/pyside/pyside-setup.git pyside-setup
+          git clone --depth 1 --branch 6.11.2 https://code.qt.io/pyside/pyside-setup.git pyside-setup
+          echo "Version Qt for Python verrouillee sur 6.11.2 pour correspondre aux roues Android."
+          git -C pyside-setup describe --tags --always
 
       - name: Installer toutes les dependances du compilateur Android Qt
         run: |
@@ -129,6 +131,15 @@ jobs:
           else
             echo "::warning::Dossier Ressources absent"
           fi
+
+      - name: Installer les dependances de deploiement Android
+        run: |
+          REQUIREMENTS_ANDROID="$(python -c 'import pathlib, PySide6; print(pathlib.Path(PySide6.__file__).parent / "scripts" / "requirements-android.txt")')"
+          echo "Fichier de dependances : $REQUIREMENTS_ANDROID"
+          test -f "$REQUIREMENTS_ANDROID"
+          python -m pip install -r "$REQUIREMENTS_ANDROID"
+          python -m pip install pkginfo
+          python -m pip show pkginfo
 
       - name: Construire APK Android
         run: |
