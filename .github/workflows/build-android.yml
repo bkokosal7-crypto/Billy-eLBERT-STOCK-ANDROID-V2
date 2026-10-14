@@ -69,6 +69,8 @@ jobs:
           python -m pip install -r pyside-setup/requirements.txt
           python -m pip install -r pyside-setup/tools/cross_compile_android/requirements.txt
           python -m pip install jinja2
+          python -m pip install qtpip
+          python -m qtpip --help
 
       - name: Telecharger les outils Android Qt
         run: |
