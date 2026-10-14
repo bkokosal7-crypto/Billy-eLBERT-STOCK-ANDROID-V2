@@ -1,179 +1,157 @@
-name: Construire APK Android - Billy-eLBERT STOCK
+name: Build Android APK
 
 on:
   workflow_dispatch:
-
-  push:
-    branches:
-      - main
-      - master
 
 permissions:
   contents: read
 
 jobs:
   build-apk:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 360
 
     steps:
-
-      - name: Recuperer le projet
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Installer Python 3.12
+      - name: Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Installer Java 17
+      - name: Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Verifier l'environnement
+      - name: Verification projet
         run: |
-          echo "=== PYTHON ==="
-          python --version
+          echo "===== DEPOT ====="
+          ls -la
 
-          echo "=== PIP ==="
-          pip --version
+          if [ ! -f main.py ]; then
+            echo "Erreur : main.py introuvable"
+            exit 1
+          fi
 
-          echo "=== JAVA ==="
-          java -version
+          python -m py_compile main.py
 
-      - name: Installer dependances Linux
+      - name: Installer dependances systeme
         run: |
           sudo apt-get update
 
           sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            curl \
-            wget \
-            build-essential \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses-dev \
-            cmake \
-            libffi-dev \
-            libssl-dev
+          git \
+          zip \
+          unzip \
+          wget \
+          curl \
+          build-essential \
+          autoconf \
+          automake \
+          libtool \
+          pkg-config \
+          cmake \
+          zlib1g-dev \
+          libffi-dev \
+          libssl-dev
 
-      - name: Mettre a jour pip
+      - name: Upgrade pip
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools wheel
 
-      - name: Installer PySide6
+      - name: Installer dependances Python
         run: |
           pip install PySide6
-
-      - name: Installer Buildozer et Cython
-        run: |
+          pip install shiboken6
           pip install "Cython<3.2"
           pip install buildozer
+          pip install reportlab
 
-      - name: Telecharger les outils Android Qt
+      - name: Verification ressources
+        run: |
+          if [ -d Ressources ]; then
+            echo "Dossier Ressources detecte"
+            find Ressources -type f
+          else
+            echo "Attention : dossier Ressources absent"
+          fi
+
+      - name: Recuperer outils Android Qt
         run: |
           git clone --depth 1 https://code.qt.io/pyside/pyside-setup.git
 
+      - name: Telecharger SDK Android Qt
+        run: |
           python pyside-setup/tools/cross_compile_android/main.py \
-            --download-only \
-            --skip-update \
-            --auto-accept-license
+          --download-only \
+          --skip-update \
+          --auto-accept-license
 
-      - name: Telecharger PySide6 Android ARM64
+      - name: Telecharger roues Android
         run: |
           mkdir -p android-wheels
 
           cd android-wheels
 
           qtpip download PySide6 \
-            --android \
-            --arch aarch64
+          --android \
+          --arch aarch64
 
-          echo "=== Fichiers trouves ==="
           find .
 
-          PYSIDE_WHEEL=$(find . -name "PySide6*.whl" | head -n 1)
-          SHIBOKEN_WHEEL=$(find . -name "shiboken6*.whl" | head -n 1)
+          PYSIDE_WHEEL=$(find . -iname "PySide6*.whl" | head -n 1)
+          SHIBOKEN_WHEEL=$(find . -iname "shiboken6*.whl" | head -n 1)
 
           if [ -z "$PYSIDE_WHEEL" ]; then
-            echo "Wheel PySide6 introuvable"
+            echo "PySide6 wheel introuvable"
             exit 1
           fi
 
           if [ -z "$SHIBOKEN_WHEEL" ]; then
-            echo "Wheel Shiboken6 introuvable"
+            echo "Shiboken wheel introuvable"
             exit 1
           fi
 
           echo "PYSIDE_WHEEL=$PWD/$PYSIDE_WHEEL" >> $GITHUB_ENV
           echo "SHIBOKEN_WHEEL=$PWD/$SHIBOKEN_WHEEL" >> $GITHUB_ENV
 
-      - name: Verifier le projet
-        run: |
-          echo "=== CONTENU DU DEPOT ==="
-          ls -la
-
-          if [ ! -f main.py ]; then
-            echo "main.py introuvable"
-            exit 1
-          fi
-
-          python -m py_compile main.py
-
-          if [ -d Ressources ]; then
-            echo "=== DOSSIER RESSOURCES ==="
-            find Ressources -type f
-          else
-            echo "::warning::Dossier Ressources absent"
-          fi
-
-      - name: Construire APK Android
+      - name: Construction APK
         run: |
           pyside6-android-deploy \
-            --force \
-            --verbose \
-            --name "Billy-eLBERT STOCK" \
-            --wheel-pyside="$PYSIDE_WHEEL" \
-            --wheel-shiboken="$SHIBOKEN_WHEEL"
+          --force \
+          --verbose \
+          --name "Billy-eLBERT STOCK" \
+          --wheel-pyside="$PYSIDE_WHEEL" \
+          --wheel-shiboken="$SHIBOKEN_WHEEL"
 
-      - name: Rechercher APK genere
+      - name: Recherche APK
         run: |
-          echo "=== RECHERCHE APK ==="
+          find . -name "*.apk"
 
-          find . -type f -name "*.apk"
-
-      - name: Preparer APK
-        shell: bash
+      - name: Preparation APK
         run: |
-          set -e
+          mkdir -p dist
 
-          mkdir -p dist-apk
-
-          APK=$(find . -type f -name "*.apk" | head -n 1)
+          APK=$(find . -name "*.apk" | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "Aucun APK genere"
             exit 1
           fi
 
-          cp "$APK" dist-apk/Billy-eLBERT-STOCK-ARM64.apk
+          cp "$APK" dist/Billy-eLBERT-STOCK.apk
 
-          sha256sum dist-apk/Billy-eLBERT-STOCK-ARM64.apk \
-            > dist-apk/SHA256SUMS.txt
+          sha256sum dist/Billy-eLBERT-STOCK.apk > dist/SHA256SUMS.txt
 
-          ls -lh dist-apk/
-          - name: Publier APK
-          uses: actions/upload-artifact@v4
-          with:
-          name: Billy-eLBERT-STOCK-APK-ARM64
-          path: dist-apk/*
-          if-no-files-found: error
+          ls -lh dist
+
+      - name: Publier APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Billy-eLBERT-STOCK-APK
+          path: dist/*
           retention-days: 14
