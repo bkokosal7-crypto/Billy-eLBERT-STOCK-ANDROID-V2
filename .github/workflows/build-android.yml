@@ -61,22 +61,24 @@ jobs:
           python -m pip install "Cython<3.2"
           python -m pip install buildozer
 
-      - name: Telecharger le code source officiel Qt for Python
+      - name: Telecharger le code source officiel Qt for Python hors du projet
         run: |
-          git clone --depth 1 --branch 6.11.2 https://code.qt.io/pyside/pyside-setup.git pyside-setup
-          echo "Version Qt for Python verrouillee sur 6.11.2 pour correspondre aux roues Android."
-          git -C pyside-setup describe --tags --always
+          PYSIDE_SETUP_DIR="$RUNNER_TEMP/pyside-setup"
+          git clone --depth 1 --branch 6.11.2 https://code.qt.io/pyside/pyside-setup.git "$PYSIDE_SETUP_DIR"
+          echo "PYSIDE_SETUP_DIR=$PYSIDE_SETUP_DIR" >> "$GITHUB_ENV"
+          echo "Version Qt for Python verrouillee sur 6.11.2."
+          git -C "$PYSIDE_SETUP_DIR" describe --tags --always
 
       - name: Installer toutes les dependances du compilateur Android Qt
         run: |
-          python -m pip install -r pyside-setup/requirements.txt
-          python -m pip install -r pyside-setup/tools/cross_compile_android/requirements.txt
+          python -m pip install -r "$PYSIDE_SETUP_DIR/requirements.txt"
+          python -m pip install -r "$PYSIDE_SETUP_DIR/tools/cross_compile_android/requirements.txt"
           python -m pip install jinja2
           echo "Les roues Android seront telechargees depuis les archives officielles Qt, sans qtpip commercial."
 
       - name: Telecharger les outils Android Qt
         run: |
-          python pyside-setup/tools/cross_compile_android/main.py \
+          python "$PYSIDE_SETUP_DIR/tools/cross_compile_android/main.py" \
             --download-only \
             --skip-update \
             --auto-accept-license
