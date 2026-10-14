@@ -1,14 +1,12 @@
-
 name: Construire APK Android - Billy-eLBERT STOCK
 
 on:
   workflow_dispatch:
+
   push:
-    branches: [main, master]
-    paths:
-      - "main.py"
-      - "Ressources/**"
-      - ".github/workflows/build-android.yml"
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
@@ -19,83 +17,162 @@ jobs:
     timeout-minutes: 360
 
     steps:
+
       - name: Recuperer le projet
         uses: actions/checkout@v4
 
-      - name: Installer Python et Java
+      - name: Installer Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
-      - uses: actions/setup-java@v4
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Installer les outils de base
+      - name: Verifier l'environnement
+        run: |
+          echo "=== PYTHON ==="
+          python --version
+
+          echo "=== PIP ==="
+          pip --version
+
+          echo "=== JAVA ==="
+          java -version
+
+      - name: Installer dependances Linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip curl wget build-essential autoconf automake libtool pkg-config zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev
-          python -m pip install --upgrade pip setuptools wheel
 
-      - name: Installer PySide6 et Buildozer
+          sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            curl \
+            wget \
+            build-essential \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses-dev \
+            cmake \
+            libffi-dev \
+            libssl-dev
+
+      - name: Mettre a jour pip
         run: |
-          python -m pip install "PySide6==6.11.2"
-          python -m pip install "Cython<3.2" buildozer
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools wheel
+
+      - name: Installer PySide6
+        run: |
+          pip install PySide6
+
+      - name: Installer Buildozer et Cython
+        run: |
+          pip install "Cython<3.2"
+          pip install buildozer
 
       - name: Telecharger les outils Android Qt
         run: |
-          git clone --depth 1 https://code.qt.io/pyside/pyside-setup.git /tmp/pyside-setup
-          python /tmp/pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
+          git clone --depth 1 https://code.qt.io/pyside/pyside-setup.git
+
+          python pyside-setup/tools/cross_compile_android/main.py \
+            --download-only \
+            --skip-update \
+            --auto-accept-license
 
       - name: Telecharger PySide6 Android ARM64
         run: |
           mkdir -p android-wheels
+
           cd android-wheels
-          qtpip download PySide6 --android --arch aarch64
-          PYSIDE_WHEEL="$(find "$PWD" -maxdepth 1 -type f -iname 'pyside6-*.whl' | head -n 1)"
-          SHIBOKEN_WHEEL="$(find "$PWD" -maxdepth 1 -type f -iname 'shiboken6-*.whl' | head -n 1)"
-          test -n "$PYSIDE_WHEEL"
-          test -n "$SHIBOKEN_WHEEL"
-          echo "PYSIDE_WHEEL=$PYSIDE_WHEEL" >> "$GITHUB_ENV"
-          echo "SHIBOKEN_WHEEL=$SHIBOKEN_WHEEL" >> "$GITHUB_ENV"
+
+          qtpip download PySide6 \
+            --android \
+            --arch aarch64
+
+          echo "=== Fichiers trouves ==="
+          find .
+
+          PYSIDE_WHEEL=$(find . -name "PySide6*.whl" | head -n 1)
+          SHIBOKEN_WHEEL=$(find . -name "shiboken6*.whl" | head -n 1)
+
+          if [ -z "$PYSIDE_WHEEL" ]; then
+            echo "Wheel PySide6 introuvable"
+            exit 1
+          fi
+
+          if [ -z "$SHIBOKEN_WHEEL" ]; then
+            echo "Wheel Shiboken6 introuvable"
+            exit 1
+          fi
+
+          echo "PYSIDE_WHEEL=$PWD/$PYSIDE_WHEEL" >> $GITHUB_ENV
+          echo "SHIBOKEN_WHEEL=$PWD/$SHIBOKEN_WHEEL" >> $GITHUB_ENV
 
       - name: Verifier le projet
         run: |
-          test -f main.py
+          echo "=== CONTENU DU DEPOT ==="
+          ls -la
+
+          if [ ! -f main.py ]; then
+            echo "main.py introuvable"
+            exit 1
+          fi
+
           python -m py_compile main.py
+
           if [ -d Ressources ]; then
-            find Ressources -maxdepth 2 -type f -print
+            echo "=== DOSSIER RESSOURCES ==="
+            find Ressources -type f
           else
             echo "::warning::Dossier Ressources absent"
           fi
 
-      - name: Construire APK ARM64
+      - name: Construire APK Android
         run: |
-          pyside6-android-deploy --force --verbose --name "Billy-eLBERT STOCK" \
+          pyside6-android-deploy \
+            --force \
+            --verbose \
+            --name "Billy-eLBERT STOCK" \
             --wheel-pyside="$PYSIDE_WHEEL" \
-            --wheel-shiboken="$SHIBOKEN_WHEEL" \
-            --extra-ignore-dirs ".git,.github,.venv,venv,build,dist,android-wheels,__pycache__"
+            --wheel-shiboken="$SHIBOKEN_WHEEL"
 
-      - name: Preparer le fichier APK
+      - name: Rechercher APK genere
+        run: |
+          echo "=== RECHERCHE APK ==="
+
+          find . -type f -name "*.apk"
+
+      - name: Preparer APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
+
           mkdir -p dist-apk
-          APK="$(find . -type f -name '*.apk' -not -path './.git/*' -not -path './.venv/*' -not -path './venv/*' | head -n 1)"
+
+          APK=$(find . -type f -name "*.apk" | head -n 1)
+
           if [ -z "$APK" ]; then
-            echo "::error::Aucun APK n'a ete produit"
-            find . -maxdepth 6 -type f -name '*.log' -print
+            echo "Aucun APK genere"
             exit 1
           fi
-          cp "$APK" dist-apk/Billy-eLBERT-STOCK-ARM64.apk
-          sha256sum dist-apk/Billy-eLBERT-STOCK-ARM64.apk > dist-apk/SHA256SUMS.txt
-          ls -lh dist-apk/
 
-      - name: Publier l'APK
-        uses: actions/upload-artifact@v4
-        with:
+          cp "$APK" dist-apk/Billy-eLBERT-STOCK-ARM64.apk
+
+          sha256sum dist-apk/Billy-eLBERT-STOCK-ARM64.apk \
+            > dist-apk/SHA256SUMS.txt
+
+          ls -lh dist-apk/
+          - name: Publier APK
+          uses: actions/upload-artifact@v4
+          with:
           name: Billy-eLBERT-STOCK-APK-ARM64
           path: dist-apk/*
           if-no-files-found: error
