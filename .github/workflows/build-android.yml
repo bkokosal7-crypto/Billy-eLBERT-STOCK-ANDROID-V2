@@ -19,10 +19,10 @@ jobs:
       - name: Recuperer le projet
         uses: actions/checkout@v4
 
-      - name: Installer Python 3.11 (requis par le deploiement Android)
+      - name: Installer Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Installer Java 17
         uses: actions/setup-java@v4
@@ -45,8 +45,7 @@ jobs:
           sudo apt-get install -y \
             git zip unzip curl wget build-essential \
             autoconf automake libtool pkg-config zlib1g-dev \
-            libncurses-dev cmake libffi-dev libssl-dev \
-            libdouble-conversion3
+            libncurses-dev cmake libffi-dev libssl-dev
 
       - name: Mettre a jour pip
         run: |
@@ -61,62 +60,42 @@ jobs:
           python -m pip install "Cython<3.2"
           python -m pip install buildozer
 
-      - name: Telecharger le code source officiel Qt for Python hors du projet
+      - name: Telecharger le code source officiel Qt for Python
         run: |
-          PYSIDE_SETUP_DIR="$RUNNER_TEMP/pyside-setup"
-          git clone --depth 1 --branch 6.11.2 https://code.qt.io/pyside/pyside-setup.git "$PYSIDE_SETUP_DIR"
-          echo "PYSIDE_SETUP_DIR=$PYSIDE_SETUP_DIR" >> "$GITHUB_ENV"
-          echo "Version Qt for Python verrouillee sur 6.11.2."
-          git -C "$PYSIDE_SETUP_DIR" describe --tags --always
+          git clone --depth 1 https://code.qt.io/pyside/pyside-setup.git pyside-setup
 
       - name: Installer toutes les dependances du compilateur Android Qt
         run: |
-          python -m pip install -r "$PYSIDE_SETUP_DIR/requirements.txt"
-          python -m pip install -r "$PYSIDE_SETUP_DIR/tools/cross_compile_android/requirements.txt"
+          python -m pip install -r pyside-setup/requirements.txt
+          python -m pip install -r pyside-setup/tools/cross_compile_android/requirements.txt
           python -m pip install jinja2
-          echo "Les roues Android seront telechargees depuis les archives officielles Qt, sans qtpip commercial."
 
       - name: Telecharger les outils Android Qt
         run: |
-          python "$PYSIDE_SETUP_DIR/tools/cross_compile_android/main.py" \
+          python pyside-setup/tools/cross_compile_android/main.py \
             --download-only \
             --skip-update \
             --auto-accept-license
 
-      - name: Telecharger PySide6 Android ARM64 depuis Qt officiel
-        shell: bash
+      - name: Telecharger PySide6 Android ARM64
         run: |
-          set -euo pipefail
           mkdir -p android-wheels
           cd android-wheels
-          BASE="https://download.qt.io/official_releases/QtForPython"
-          PYSIDE_FILE="pyside6-6.11.2-6.11.2-cp311-cp311-android_aarch64.whl"
-          SHIBOKEN_FILE="shiboken6-6.11.2-6.11.2-cp311-cp311-android_aarch64.whl"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "$BASE/pyside6/$PYSIDE_FILE" -o "$PYSIDE_FILE"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "$BASE/shiboken6/$SHIBOKEN_FILE" -o "$SHIBOKEN_FILE"
-          echo "=== Verification des roues Android officielles ==="
-          ls -lh *.whl
-          echo "c5288e0740ad91d87d4cafa16132768c149c56521bf63c83c98404b865911678  $PYSIDE_FILE" | sha256sum -c -
-          echo "e99609b689d3df2ac97ffbe17df0ce8b1246b2c47b4d24f6fb73f1eaad4bd0f2  $SHIBOKEN_FILE" | sha256sum -c -
-          python - <<'PYWHEELS'
-          from pathlib import Path
-          from zipfile import ZipFile
-          files = list(Path('.').glob('*.whl'))
-          assert len(files) == 2, f"Deux roues attendues, trouvees: {len(files)}"
-          for f in files:
-              with ZipFile(f) as z:
-                  assert z.testzip() is None, f"Archive corrompue: {f}"
-              print(f"OK archive: {f} ({f.stat().st_size} octets)")
-          PYSIDE = next(f for f in files if f.name.startswith('pyside6-'))
-          SHIBOKEN = next(f for f in files if f.name.startswith('shiboken6-'))
-          with open(Path(__import__('os').environ['GITHUB_ENV']), 'a') as env:
-              env.write(f"PYSIDE_WHEEL={PYSIDE.resolve()}\n")
-              env.write(f"SHIBOKEN_WHEEL={SHIBOKEN.resolve()}\n")
-          PYSIDE_WHEEL = PYSIDE
-          SHIBOKEN_WHEEL = SHIBOKEN
-          PYWHEELS
+          qtpip download PySide6 --android --arch aarch64
+          echo "=== Fichiers trouves ==="
+          find . -maxdepth 1 -type f -print
+          PYSIDE_WHEEL="$(find . -maxdepth 1 -type f -iname 'pyside6-*.whl' | head -n 1)"
+          SHIBOKEN_WHEEL="$(find . -maxdepth 1 -type f -iname 'shiboken6-*.whl' | head -n 1)"
+          if [ -z "$PYSIDE_WHEEL" ]; then
+            echo "::error::Wheel PySide6 Android introuvable"
+            exit 1
+          fi
+          if [ -z "$SHIBOKEN_WHEEL" ]; then
+            echo "::error::Wheel Shiboken6 Android introuvable"
+            exit 1
+          fi
+          echo "PYSIDE_WHEEL=$PWD/$PYSIDE_WHEEL" >> "$GITHUB_ENV"
+          echo "SHIBOKEN_WHEEL=$PWD/$SHIBOKEN_WHEEL" >> "$GITHUB_ENV"
 
       - name: Verifier le projet
         run: |
@@ -133,15 +112,6 @@ jobs:
           else
             echo "::warning::Dossier Ressources absent"
           fi
-
-      - name: Installer les dependances de deploiement Android
-        run: |
-          REQUIREMENTS_ANDROID="$(python -c 'import pathlib, PySide6; print(pathlib.Path(PySide6.__file__).parent / "scripts" / "requirements-android.txt")')"
-          echo "Fichier de dependances : $REQUIREMENTS_ANDROID"
-          test -f "$REQUIREMENTS_ANDROID"
-          python -m pip install -r "$REQUIREMENTS_ANDROID"
-          python -m pip install pkginfo
-          python -m pip show pkginfo
 
       - name: Construire APK Android
         run: |
