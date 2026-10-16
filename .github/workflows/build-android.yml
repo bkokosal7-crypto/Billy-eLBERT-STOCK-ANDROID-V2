@@ -146,32 +146,54 @@ jobs:
       - name: Construire APK Android
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           echo "=== COMPILATION ANDROID ARM64 ==="
-          echo "Conservation du journal complet pour identifier l'erreur exacte."
-          echo "Compilation temporaire sans modification de main.py ni suppression de fonctionnalites PDF."
+          echo "Compilation sans modification de main.py et sans suppression des fonctions PDF."
+          echo "=== VERSION PYSIDE6 ==="
+          python -m pip show PySide6
+          echo "Roue PySide6 : $PYSIDE_WHEEL"
+          echo "Roue Shiboken : $SHIBOKEN_WHEEL"
+          set +e
           pyside6-android-deploy \
             --force \
             --verbose \
-            --name Billy-eLBERT-STOCK \
+            --name "Billy-eLBERT-STOCK" \
             --wheel-pyside="$PYSIDE_WHEEL" \
             --wheel-shiboken="$SHIBOKEN_WHEEL" 2>&1 | tee android-build.log
+          BUILD_STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "$BUILD_STATUS" > android-build-exit-code.txt
+          if [ "$BUILD_STATUS" -ne 0 ]; then
+            echo "::error::La compilation Android a echoue. Le journal complet sera publie."
+            echo "=== DERNIERES LIGNES DU JOURNAL DE COMPILATION ==="
+            tail -n 250 android-build.log || true
+            exit "$BUILD_STATUS"
+          fi
 
       - name: Conserver le journal de compilation meme en cas d'echec
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Billy-eLBERT-STOCK-journal-compilation
-          path: android-build.log
+          path: |
+            android-build.log
+            android-build-exit-code.txt
           if-no-files-found: ignore
           retention-days: 7
 
       - name: Rechercher APK genere
+        if: always()
         run: |
           echo "=== RECHERCHE APK ==="
-          find . -type f -name "*.apk" -not -path "./.git/*"
+          find . -type f -name "*.apk" \
+            -not -path "./.git/*" \
+            -not -path "./android-wheels/*" \
+            -print || true
+          echo "=== JOURNAUX DISPONIBLES ==="
+          find . -maxdepth 7 -type f \( -name "*.log" -o -name "*exit-code.txt" \) -print || true
 
       - name: Preparer APK
+        if: success()
         shell: bash
         run: |
           set -euo pipefail
@@ -179,12 +201,18 @@ jobs:
           APK="$(find . -type f -name "*.apk" \
             -not -path "./.git/*" \
             -not -path "./android-wheels/*" \
-            | head -n 1)"
+            -not -path "./dist-apk/*" \
+            -print -quit)"
           if [ -z "$APK" ]; then
-            echo "::error::Aucun APK genere"
-            find . -maxdepth 7 -type f -name "*.log" -print
+            echo "::error::La compilation s'est terminee sans produire d'APK."
+            echo "Ce message est un symptome, pas la cause initiale."
+            if [ -f android-build.log ]; then
+              echo "=== FIN DU JOURNAL DE COMPILATION ==="
+              tail -n 250 android-build.log
+            fi
             exit 1
           fi
+          echo "APK trouve : $APK"
           cp "$APK" dist-apk/Billy-eLBERT-STOCK-ARM64.apk
           sha256sum dist-apk/Billy-eLBERT-STOCK-ARM64.apk \
             > dist-apk/SHA256SUMS.txt
