@@ -44,8 +44,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             git zip unzip curl wget build-essential \
-            autoconf automake libtool pkg-config zlib1g-dev \
-            libncurses-dev cmake libffi-dev libssl-dev \
+            autoconf automake libtool libtool-bin libltdl-dev pkg-config \
+            zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev \
             libdouble-conversion3
 
       - name: Mettre a jour pip
@@ -153,6 +153,11 @@ jobs:
           python -m pip show PySide6
           echo "Roue PySide6 : $PYSIDE_WHEEL"
           echo "Roue Shiboken : $SHIBOKEN_WHEEL"
+          echo "=== Verification des macros libtool ==="
+          test -f /usr/share/aclocal/libtool.m4
+          grep -n "LT_SYS_SYMBOL_USCORE" /usr/share/aclocal/libtool.m4 || true
+          export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}"
+          export AUTOM4TE_CFG="/usr/share/autoconf"
           set +e
           pyside6-android-deploy \
             --force \
